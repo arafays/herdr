@@ -266,26 +266,6 @@ fn usable_process_cwd(pid: u32) -> Option<std::path::PathBuf> {
     crate::platform::process_cwd(pid).filter(|cwd| cwd.is_absolute() && cwd.is_dir())
 }
 
-#[cfg(unix)]
-fn foreground_member_cwd_different_from_shell(
-    shell_pid: u32,
-    shell_cwd: Option<&std::path::PathBuf>,
-) -> Option<std::path::PathBuf> {
-    let job = crate::detect::foreground_job(shell_pid)?;
-    for process in job.processes {
-        if process.pid == shell_pid {
-            continue;
-        }
-        let Some(cwd) = usable_process_cwd(process.pid) else {
-            continue;
-        };
-        if shell_cwd != Some(&cwd) {
-            return Some(cwd);
-        }
-    }
-    None
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ForegroundShellAgentAction {
     ObserveProbe,
@@ -2728,19 +2708,11 @@ impl PaneRuntime {
         #[cfg(unix)]
         {
             let pid = self.child_pid.load(Ordering::Acquire);
-            let shell_cwd = usable_process_cwd(pid);
             let foreground_pgid = self
                 .io
                 .foreground_process_group_id()
                 .or_else(|| crate::platform::foreground_process_group_id(pid));
-            let leader_cwd = foreground_pgid.and_then(usable_process_cwd);
-
-            if leader_cwd.as_ref() == shell_cwd.as_ref() {
-                foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref()).or(leader_cwd)
-            } else {
-                leader_cwd
-                    .or_else(|| foreground_member_cwd_different_from_shell(pid, shell_cwd.as_ref()))
-            }
+            foreground_pgid.and_then(usable_process_cwd)
         }
 
         #[cfg(not(unix))]
